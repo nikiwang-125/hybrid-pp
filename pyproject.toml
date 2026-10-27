@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-pp"
+version = "0.1.0"
+description = "Pipeline-parallel inference experiments for hybrid Mamba-Transformer models on vLLM"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+analysis = ["pandas", "matplotlib"]
+
+# vLLM loads every entry point in this group inside the API server and every
+# worker process, so our patches are applied wherever the model runs.
+[project.entry-points."vllm.general_plugins"]
+hybrid_pp = "hybrid_pp.plugin:register"
+
+[tool.setuptools.packages.find]
+include = ["hybrid_pp*"]

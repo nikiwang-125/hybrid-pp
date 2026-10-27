@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+.ipynb_checkpoints/
+
+# experiment outputs and logs stay on the GPU box; commit only curated results
+results/
+logs/
+third_party/
+*.log
