@@ -20,7 +20,8 @@ if ! conda env list | grep -q "^${ENV_NAME} "; then
 fi
 conda activate "$ENV_NAME"
 
-pip install "vllm==${VLLM_VERSION}"
+# vllm 0.10.1.1 has no upper bound on transformers; 5.x breaks it.
+pip install "vllm==${VLLM_VERSION}" "transformers>=4.55,<4.56"
 pip install -e "${REPO_DIR}[analysis]"
 
 # vLLM source at the same tag, for reading (not installed).
@@ -30,8 +31,10 @@ if [ ! -d "${REPO_DIR}/third_party/vllm" ]; then
 fi
 
 if [ -z "${SKIP_MODELS:-}" ]; then
+  # huggingface_hub >= 1.0 renamed huggingface-cli to hf.
+  HF_CLI=$(command -v hf || command -v huggingface-cli)
   for m in $MODELS; do
-    huggingface-cli download "$m"
+    "$HF_CLI" download "$m"
   done
 fi
 
