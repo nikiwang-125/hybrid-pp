@@ -4,6 +4,9 @@ set -uo pipefail
 
 echo "== GPUs";        nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv
 echo "== topology";    nvidia-smi topo -m
+if nvidia-smi --query-gpu=name --format=csv,noheader | grep -q "4090"; then
+  echo "NOTE: RTX 4090 has no NVLink. If vllm serve hangs at NCCL init, rerun with: export NCCL_P2P_DISABLE=1"
+fi
 echo "== CUDA (torch)"
 python - <<'EOF'
 import torch

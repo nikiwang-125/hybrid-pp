@@ -12,7 +12,6 @@
 
 ```bash
 git clone <this repo> && cd hybrid-pp
-# 国内网络：export HF_ENDPOINT=https://hf-mirror.com
 bash scripts/setup_env.sh                  # conda 环境 + vllm + 本仓库 + 下载模型
 conda activate vllm010
 mkdir -p logs && bash scripts/day1.sh 2>&1 | tee logs/day1.log   # 第一天全流程验证

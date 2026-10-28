@@ -10,7 +10,7 @@ V0 decides the KV-cache size like this (see docs/findings.md):
 This module wraps ``Worker.determine_num_available_blocks`` to
 
 1. log one ``[hybrid_pp] stage_mem {json}`` line per worker, so
-   ``scripts/parse_stage_memory.py`` can compute how much memory each stage
+   ``hybrid_pp.analyze_memory`` can compute how much memory each stage
    leaves unused after the ``min()``;
 2. (fix) let a stage that holds no attention layer opt out of the ``min()``.
    Upstream returns 0 blocks for such a stage, so the whole engine fails with
@@ -75,7 +75,7 @@ def apply(fix_no_attention: bool, log_stage_memory: bool) -> None:
 
         block_bytes = self.get_cache_block_size_bytes()
         no_attention = (block_bytes == 0
-                        and not self.cache_config.is_attention_free)
+                        and not getattr(self.cache_config, "is_attention_free", False))
 
         if log_stage_memory:
             start, end, pattern = _stage_layers(self)
