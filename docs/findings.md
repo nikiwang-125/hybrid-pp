@@ -4,15 +4,20 @@
 
 ## 1. NemotronH 的 PP 有四个 bug，层层遮挡
 
-四个 bug 依次触发，前一个会挡住后一个，所以 `day1.sh` 第 3a–3c 步每次多修一个，逐个在真机上证实（2×RTX 4090，2026-10-28）：
+四个 bug 分三层触发，前一层会挡住后一层，所以 `day1.sh` 第 3a–3c 步每次多修一层，逐个在真机上证实（2×RTX 4090，2026-10-28）：
+
+1. **加载阶段**：两个 stage 都挂在 Bug 3。
+2. **启动 profile run**（两个 stage 同时跑）：stage 0 挂在 Bug 1，stage 1 挂在 Bug 4。
+3. **全部修好后**：Bug 2 导致结果错误。
 
 | 步骤 | 打开的修复 | 现象 | 证实 |
 |---|---|---|---|
 | 3a | 无（原版） | 启动加载权重时 `KeyError: 'layers.49.mixer.down_proj.weight'` | Bug 3 ✅ |
-| 3b | Bug 3 | 启动 profile run 时 `ValueError: too many values to unpack (expected 2)` | Bug 1 ✅ |
-| （旧 3c/4） | Bug 3 + 1 + 2 | 非首 stage 启动 profile run 时 `AssertionError`（`intermediate_tensors` 是 None） | Bug 4 ✅ |
-| 3c | Bug 3 + 1 + 4 | 能启动，但输出从开头就和 PP=1 不一样 | Bug 2 ⏳ |
+| 3b | Bug 3 | stage 0（APIServer 进程）：`ValueError: too many values to unpack (expected 2)`；stage 1（VllmWorkerProcess）：`AssertionError`。两次运行都同时出现 | Bug 1 ✅ Bug 4 ✅ |
+| 3c | Bug 3 + 1 + 4 | 能启动，但 10 条输出全部在第 0–5 个字符就和 PP=1 不同，内容基本是乱码（例："The capital of France is" → `' a real estate\n\\[\n\\]...'`，正确是 `' Paris. ...'`） | Bug 2 ✅ |
 | 4 | 全部 | 和 PP=1 **10/10 完全一致** | 修复正确 ✅ |
+
+Bug 4 的修复和 forward 修复在同一个开关上，没法单独复现；证据在 3b 的 stage 1 日志和 `results/day1_attempt2/correctness/pp2.server.log`（只修 Bug 3+1+2 时的 `AssertionError`）。
 
 ### Bug 4：中间结果工厂函数名字写错，静默返回 None ✅
 

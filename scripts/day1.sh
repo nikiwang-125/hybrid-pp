@@ -10,6 +10,9 @@ OUT=${OUT:-results/day1}
 # 24GB cards (3090/4090): PP=1 holds all 9B weights (~17GB), keep the
 # reference run small. Raise on 48GB+ cards.
 CORR_SEQS=${CORR_SEQS:-4}
+# Sweep/profile: 36,20 leaves stage 0 with ~19-21 GiB before KV on a 24GB
+# card; runner's default of 64 sequences does not fit there.
+RUN_SEQS=${RUN_SEQS:-16}
 NGPU=$(nvidia-smi -L | wc -l)
 CORR="python -m hybrid_pp.correctness --model $MODEL --max-num-seqs $CORR_SEQS --out $OUT/correctness"
 mkdir -p "$OUT" logs
@@ -51,7 +54,8 @@ step "6. small sweep: 3 partitions x 2 workloads (throughput, per-stage memory)"
 python -m hybrid_pp.runner --model "$MODEL" --pp 2 \
   --partitions default 20,36 36,20 \
   --workloads 1024:256 16384:128 \
-  --num-prompts 64 --concurrency 16 --out "$OUT/sweep"
+  --max-num-seqs "$RUN_SEQS" --num-prompts 64 --concurrency 16 \
+  --out "$OUT/sweep"
 python -m hybrid_pp.analyze_memory "$OUT"/sweep/*/server.log
 
 step "7. profiled run: per-layer cost + stage balance"
@@ -60,7 +64,8 @@ step "7. profiled run: per-layer cost + stage balance"
 python -m hybrid_pp.runner --model "$MODEL" --pp 2 --profile \
   --partitions default 36,20 \
   --workloads 1024:128 8192:128 16384:128 30720:64 \
-  --num-prompts 32 --concurrency 8 --out "$OUT/profile"
+  --max-num-seqs "$RUN_SEQS" --num-prompts 32 --concurrency 8 \
+  --out "$OUT/profile"
 for p in default 36-20; do
   python -m hybrid_pp.analyze_profile "$OUT"/profile/$p/*/profile \
     --out "$OUT/profile/summary_$p"

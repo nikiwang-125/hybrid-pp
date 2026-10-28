@@ -5,8 +5,8 @@ pyproject.toml), so ``pip install -e .`` is enough; no vLLM source edits.
 
 Environment switches (all optional):
   HYBRID_PP_FIX_LOAD=0       disable the NemotronH load_weights fix (bug 3)
-  HYBRID_PP_FIX=0            disable the NemotronH forward fix (bugs 1 and 2)
-  HYBRID_PP_FIX=layers_only  fix bug 1 only, keep bug 2 (wrong residual)
+  HYBRID_PP_FIX=0            disable the NemotronH forward fix (bugs 1, 2, 4)
+  HYBRID_PP_FIX=layers_only  fix bugs 1 and 4, keep bug 2 (wrong residual)
   HYBRID_PP_FIX_NOATTN=0     disable the fix for stages without attention layers
   HYBRID_PP_STAGE_MEM_LOG=0  disable the per-stage memory log line
   HYBRID_PP_PROFILE_DIR=dir  enable per-step / per-layer CUDA-event profiling
