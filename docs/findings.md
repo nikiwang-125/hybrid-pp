@@ -2,7 +2,26 @@
 
 读的是 tag `v0.10.1.1`。行号以该 tag 为准。标 ⏳ 的是读代码得出、还没在 GPU 上验证的结论，`scripts/day1.sh` 会验证。
 
-## 1. NemotronH 的 PP forward 有两个 bug ⏳
+## 1. NemotronH 的 PP 有三个 bug，层层遮挡
+
+三个 bug 依次触发，前一个会挡住后一个，所以 `day1.sh` 第 3a–3c 步每次多修一个，逐个在真机上证实：
+
+| 步骤 | 打开的修复 | 预期现象 | 证实 |
+|---|---|---|---|
+| 3a | 无（原版） | 启动加载权重时 `KeyError: 'layers.49.mixer.down_proj.weight'` | Bug 3 ✅ 已在 4090 上复现 |
+| 3b | Bug 3 | 启动 profile run 时 `ValueError: too many values to unpack (expected 2)` | Bug 1 ⏳ |
+| 3c | Bug 3 + Bug 1 | 能启动，但输出从开头就和 PP=1 不一样 | Bug 2 ⏳ |
+| 4 | 全部 | 和 PP=1 完全一致 | 修复正确 ⏳ |
+
+### Bug 3：load_weights 不跳过其他 stage 的层 ✅
+
+文件：`nemotron_h.py`，`NemotronHModel.load_weights`（约 428–470 行）。每个 stage 都会收到完整的 checkpoint，但这个函数从不调用 `is_pp_missing_parameter`，直接 `params_dict[name]`。stage 0 读到第 28 层以后的权重时就会 `KeyError`。其他模型都会先 `if is_pp_missing_parameter(name, self): continue`。
+
+### 顺带发现：embedding 和 lm_head 每个 stage 都有一份
+
+`NemotronHModel.__init__` 无条件创建 `embed_tokens`，`NemotronHForCausalLM.__init__` 无条件创建 `lm_head`，都没有按 rank 换成 `PPMissingLayer`。Nano 9B v2 的词表是 131072 × 4480，每份约 1.1GB，所以**每个 stage 都多占约 1.1GB 用不到的权重**（非首 stage 用不到 embedding，非末 stage 用不到 lm_head）。这和层间异构无关，但会挤占 KV 预算。论文里如果拿 vLLM 做 baseline，要注意这一点，或者先修掉它再比较。`model_info` 的权重估算已经按这种实际行为计算。
+
+### Bug 1 和 Bug 2：forward
 
 文件：`vllm/model_executor/models/nemotron_h.py`，`NemotronHModel.forward`（约 369–426 行）
 
@@ -13,10 +32,11 @@ for i in range(len(self.layers)):    # 402 行：遍历全部层
     hidden_states, residual = layer(positions=..., hidden_states=..., ...)
 ```
 
-- **Bug 1：遍历了所有层。** `make_layers`（`models/utils.py` 626 行）给不属于本 stage 的层放的是 `PPMissingLayer`，它的 forward 返回第一个 kwarg，也就是 `positions`。`hidden_states, residual = positions` 会直接报错。别的模型都写成 `self.layers[self.start_layer:self.end_layer]`。
+- **Bug 1：遍历了所有层。** `make_layers`（`models/utils.py` 626 行）给不属于本 stage 的层放的是 `PPMissingLayer`，它的 forward 返回第一个 kwarg，也就是 `positions`。`positions` 是长度等于 token 数的一维 tensor，`hidden_states, residual = positions` 会报 `ValueError: too many values to unpack (expected 2)`。启动时的 profile run 就会用假数据跑一次 forward，所以服务在启动阶段就会挂掉。别的模型都写成 `self.layers[self.start_layer:self.end_layer]`。
 - **Bug 2：residual 被清空。** 非首 stage 读到上一个 stage 传来的 `residual` 后，又被第 400 行置成 None，残差流就断了，结果是错的。
 - v0.10.2 和 v0.11.0 中仍有同样的代码。
 - 修复：`hybrid_pp/patches/nemotron_h_pp.py`（通过 vLLM 插件打补丁，不改 vLLM 源码）。
+- Bug 1 会挡住 Bug 2，所以第 3c 步用 `HYBRID_PP_FIX=layers_only` 只修 Bug 1，单独证实 Bug 2。
 - 结论：**vLLM 虽然声明 NemotronH 支持 `SupportsPP`，但 PP>1 实际上跑不通。** 可以在论文里写成"现有框架对混合模型的 PP 支持不成熟"的一个证据。
 
 ## 2. KV block 数在各 stage 之间取最小值

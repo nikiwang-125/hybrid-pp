@@ -106,17 +106,15 @@ def stage_table(cfg: dict, partition: list[int], dtype_bytes: int = 2,
     ssm_state = m_heads * cfg["mamba_head_dim"] * cfg["ssm_state_size"] \
         * ssm_state_bytes
     params = layer_param_counts(cfg)
-    tied = cfg.get("tie_word_embeddings", False)
 
     rows, start = [], 0
     for rank, n in enumerate(partition):
         end = start + n
         seg = pattern[start:end]
         weight = sum(params[start:end])
-        if rank == 0:
-            weight += vocab * h
-        if rank == len(partition) - 1 and (not tied or len(partition) > 1):
-            weight += vocab * h
+        # vLLM v0.10.1.1 NemotronH builds embed_tokens and lm_head on every
+        # stage, not only on the first / last one (docs/findings.md).
+        weight += 2 * vocab * h
         n_attn, n_mamba = seg.count("*"), seg.count("M")
         rows.append({
             "pp_rank": rank,

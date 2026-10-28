@@ -7,13 +7,18 @@ prompts with greedy decoding one at a time, and compares the completions.
         --pp 2 --out results/correctness
 
 Use --skip-reference to reuse an existing reference.json (e.g. when the
-reference model needs more GPUs than one), and --no-plugin-fix to see the
-upstream behaviour without our NemotronH forward fix.
+reference model needs more GPUs than one). --fix selects which of our
+NemotronH PP fixes are active on the PP side (docs/findings.md):
+  full         all fixes (default)
+  layers_only  bug 3 and 1 fixed, bug 2 kept: starts, but outputs differ
+  no_forward   only bug 3 fixed: fails in the startup profile run (bug 1)
+  none         upstream: fails while loading weights (bug 3)
 """
 
 import argparse
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -33,6 +38,26 @@ PROMPTS = [
     "Repeat after me. " + "The quick brown fox jumps over the lazy dog. " * 300
     + "\nNow say what animal jumped:",
 ]
+
+
+FIX_ENV = {
+    "full": {},
+    "layers_only": {"HYBRID_PP_FIX": "layers_only"},
+    "no_forward": {"HYBRID_PP_FIX": "0"},
+    "none": {"HYBRID_PP_FIX": "0", "HYBRID_PP_FIX_LOAD": "0"},
+}
+
+
+def last_error(log_path: str) -> str:
+    """Last exception line in a server log, e.g. 'KeyError: ...'."""
+    err = ""
+    with open(log_path, errors="replace") as f:
+        for line in f:
+            line = re.sub(r"\x1b\[[0-9;]*m", "", line)
+            m = re.search(r"\b(\w+(Error|Exception): .*)", line)
+            if m:
+                err = m.group(1).strip()
+    return err
 
 
 def complete(port: int, model: str, prompt: str, max_tokens: int) -> str:
@@ -55,7 +80,7 @@ def run(args, pp: int, out_path: str, env_extra: dict) -> list[str]:
                         args.max_num_seqs, args.gpu_memory_utilization,
                         args.eager, [])
     log = out_path.replace(".json", ".server.log")
-    with Server(cmd, env, log, args.port):
+    with Server(cmd, env, log, args.port, timeout_s=args.server_timeout):
         outputs = [complete(args.port, args.model, p, args.max_tokens)
                    for p in PROMPTS]
     with open(out_path, "w") as f:
@@ -86,8 +111,12 @@ def main():
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--out", default="results/correctness")
     ap.add_argument("--skip-reference", action="store_true")
-    ap.add_argument("--no-plugin-fix", action="store_true",
-                    help="run the PP side with HYBRID_PP_FIX=0")
+    ap.add_argument("--fix", choices=list(FIX_ENV), default="full",
+                    help="which hybrid_pp fixes the PP run uses")
+    ap.add_argument("--tag", help="output name of the PP run "
+                    "(default: pp<N>[_<partition>])")
+    ap.add_argument("--server-timeout", type=int, default=600,
+                    help="seconds to wait for a server to become healthy")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
 
@@ -99,19 +128,19 @@ def main():
         print("== PP=1 reference run", flush=True)
         ref = run(args, 1, ref_path, {})
 
-    env_extra = {}
+    env_extra = dict(FIX_ENV[args.fix])
     if args.partition:
         env_extra["VLLM_PP_LAYER_PARTITION"] = args.partition
-    if args.no_plugin_fix:
-        env_extra["HYBRID_PP_FIX"] = "0"
-    tag = f"pp{args.pp}" + (f"_{args.partition.replace(',', '-')}"
-                            if args.partition else "")
-    print(f"== PP={args.pp} run", flush=True)
+    tag = args.tag or (f"pp{args.pp}" + (
+        f"_{args.partition.replace(',', '-')}" if args.partition else ""))
+    out_path = os.path.join(args.out, f"{tag}.json")
+    print(f"== PP={args.pp} run (fix={args.fix})", flush=True)
     try:
-        got = run(args, args.pp, os.path.join(args.out, f"{tag}.json"),
-                  env_extra)
-    except RuntimeError as e:
+        got = run(args, args.pp, out_path, env_extra)
+    except (RuntimeError, TimeoutError) as e:
         print(f"FAIL: PP={args.pp} server did not start: {e}")
+        print("  last error: "
+              + last_error(out_path.replace(".json", ".server.log")))
         sys.exit(1)
 
     mismatches = 0
