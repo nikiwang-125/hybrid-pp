@@ -54,9 +54,9 @@ def last_error(log_path: str) -> str:
     with open(log_path, errors="replace") as f:
         for line in f:
             line = re.sub(r"\x1b\[[0-9;]*m", "", line)
-            m = re.search(r"\b(\w+(Error|Exception): .*)", line)
+            m = re.search(r"\b(\w+(Error|Exception))(\s*$|: .*)", line)
             if m:
-                err = m.group(1).strip()
+                err = m.group(0).strip()
     return err
 
 

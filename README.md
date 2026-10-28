@@ -17,14 +17,14 @@ conda activate vllm010
 mkdir -p logs && bash scripts/day1.sh 2>&1 | tee logs/day1.log   # 第一天全流程验证
 ```
 
-`day1.sh` 依次运行：环境检查 → 静态 stage 分析 → 逐个证实 3 个上游 bug → 打补丁的 PP=2 与 PP=1 输出对比 → 小规模切分扫描 → profiling。跑完后把 `logs/day1.log` 和 `results/day1/` 带回来分析。
+`day1.sh` 依次运行：环境检查 → 静态 stage 分析 → 逐个证实上游 bug → 打补丁的 PP=2 与 PP=1 输出对比 → 小规模切分扫描 → profiling。跑完后把 `logs/day1.log` 和 `results/day1/` 带回来分析。
 
 ## 仓库结构
 
 | 路径 | 作用 |
 |---|---|
 | `hybrid_pp/plugin.py` | vLLM 插件入口，按环境变量启用各补丁 |
-| `hybrid_pp/patches/nemotron_h_pp.py` | 修复 NemotronH 的 PP（加载权重不跳过其他 stage 的层、遍历了所有层、residual 被清空） |
+| `hybrid_pp/patches/nemotron_h_pp.py` | 修复 NemotronH 的 4 个 PP bug（加载权重不跳过其他 stage 的层、遍历了所有层、residual 被清空、中间结果工厂函数名写错） |
 | `hybrid_pp/patches/stage_memory.py` | 每个 stage 打印显存明细；允许没有 attention 层的 stage 启动 |
 | `hybrid_pp/profiler.py` | 用 CUDA event 记录每步、每层的 GPU 耗时（需要 `--enforce-eager`） |
 | `hybrid_pp/model_info.py` | 不需要 GPU：分析任意切分下各 stage 的层构成和显存估算 |
@@ -64,7 +64,7 @@ python -m hybrid_pp.analyze_profile results/layers_pp1/default/*/profile --out r
 | 变量 | 默认值 | 作用 |
 |---|---|---|
 | `HYBRID_PP_FIX_LOAD` | 1 | NemotronH load_weights 修复（Bug 3） |
-| `HYBRID_PP_FIX` | 1 | NemotronH forward 修复（Bug 1、2）；设为 `layers_only` 只修 Bug 1 |
+| `HYBRID_PP_FIX` | 1 | NemotronH forward 修复（Bug 1、2、4）；设为 `layers_only` 只修 Bug 1 |
 | `HYBRID_PP_FIX_NOATTN` | 1 | 没有 attention 层的 stage 不参与 KV block 的 min() |
 | `HYBRID_PP_STAGE_MEM_LOG` | 1 | 每个 stage 打印一行 `[hybrid_pp] stage_mem {...}` |
 | `HYBRID_PP_PROFILE_DIR` | 未设置 | 设置后开启 profiling，结果写到这个目录 |

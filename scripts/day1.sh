@@ -23,7 +23,7 @@ step "2. static stage analysis (no GPU)"
 python -m hybrid_pp.model_info "$MODEL" --pp 2
 python -m hybrid_pp.model_info "$MODEL" --pp 4
 
-# Steps 3a-3c confirm docs/findings.md bugs 3, 1, 2 on real hardware. Each
+# Steps 3a-3c confirm docs/findings.md bugs 3, 1, 2 (bug 4 is fixed with 1) on real hardware. Each
 # bug masks the next one, so each run fixes one more. Failure is expected.
 step "3a. upstream PP=2 (expect KeyError while loading weights: bug 3)"
 $CORR --pp 2 --fix none --tag pp2_upstream \
@@ -33,7 +33,7 @@ step "3b. only bug 3 fixed (expect 'too many values to unpack': bug 1)"
 $CORR --pp 2 --fix no_forward --tag pp2_no_forward --skip-reference \
   || echo ">> as expected: fails (bug 1)"
 
-step "3c. bugs 3+1 fixed, bug 2 kept (expect start OK, outputs differ early)"
+step "3c. bugs 3+1+4 fixed, bug 2 kept (expect start OK, outputs differ early)"
 $CORR --pp 2 --fix layers_only --tag pp2_layers_only --skip-reference \
   || echo ">> as expected: outputs differ (bug 2)"
 

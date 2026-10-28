@@ -15,10 +15,15 @@ masks the next, so they can be switched on/off separately:
 2. ``residual = None`` is set unconditionally after reading the
    intermediate tensors, so non-first stages drop the residual stream
    received from the previous stage and produce wrong outputs.
+4. ``NemotronHForCausalLM`` names its factory ``make_empty_intmd_tensors``
+   instead of ``make_empty_intermediate_tensors``. The model runner calls the
+   latter for the profile run and CUDA graph capture on non-first stages; it
+   resolves to the empty ``SupportsPP`` protocol stub, which returns None,
+   so the forward fails on ``assert intermediate_tensors is not None``.
 
-``apply_load_fix`` fixes 3. ``apply_forward_fix(keep_residual=True)`` fixes 1
-and 2; with ``keep_residual=False`` it fixes only 1 and reproduces 2, which
-lets a server start and shows the wrong outputs bug 2 causes.
+``apply_load_fix`` fixes 3. ``apply_forward_fix(keep_residual=True)`` fixes 1,
+2 and 4; with ``keep_residual=False`` it keeps 2, which lets a server start
+and shows the wrong outputs bug 2 causes.
 """
 
 import logging
@@ -115,6 +120,11 @@ def apply_forward_fix(keep_residual: bool = True) -> None:
         hidden_states, _ = self.norm_f(hidden_states, residual)
         return hidden_states
 
+    def make_empty_intermediate_tensors(self, batch_size, dtype, device):
+        return self.model.make_empty_intmd_tensors(batch_size, dtype, device)
+
     nemotron_h.NemotronHModel.forward = forward
+    nemotron_h.NemotronHForCausalLM.make_empty_intermediate_tensors = (
+        make_empty_intermediate_tensors)
     logger.info("[hybrid_pp] patched NemotronHModel.forward for PP "
                 "(keep_residual=%s)", keep_residual)

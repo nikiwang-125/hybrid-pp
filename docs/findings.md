@@ -2,16 +2,21 @@
 
 读的是 tag `v0.10.1.1`。行号以该 tag 为准。标 ⏳ 的是读代码得出、还没在 GPU 上验证的结论，`scripts/day1.sh` 会验证。
 
-## 1. NemotronH 的 PP 有三个 bug，层层遮挡
+## 1. NemotronH 的 PP 有四个 bug，层层遮挡
 
-三个 bug 依次触发，前一个会挡住后一个，所以 `day1.sh` 第 3a–3c 步每次多修一个，逐个在真机上证实：
+四个 bug 依次触发，前一个会挡住后一个，所以 `day1.sh` 第 3a–3c 步每次多修一个，逐个在真机上证实（2×RTX 4090，2026-10-28）：
 
-| 步骤 | 打开的修复 | 预期现象 | 证实 |
+| 步骤 | 打开的修复 | 现象 | 证实 |
 |---|---|---|---|
-| 3a | 无（原版） | 启动加载权重时 `KeyError: 'layers.49.mixer.down_proj.weight'` | Bug 3 ✅ 已在 4090 上复现 |
-| 3b | Bug 3 | 启动 profile run 时 `ValueError: too many values to unpack (expected 2)` | Bug 1 ⏳ |
-| 3c | Bug 3 + Bug 1 | 能启动，但输出从开头就和 PP=1 不一样 | Bug 2 ⏳ |
-| 4 | 全部 | 和 PP=1 完全一致 | 修复正确 ⏳ |
+| 3a | 无（原版） | 启动加载权重时 `KeyError: 'layers.49.mixer.down_proj.weight'` | Bug 3 ✅ |
+| 3b | Bug 3 | 启动 profile run 时 `ValueError: too many values to unpack (expected 2)` | Bug 1 ✅ |
+| （旧 3c/4） | Bug 3 + 1 + 2 | 非首 stage 启动 profile run 时 `AssertionError`（`intermediate_tensors` 是 None） | Bug 4 ✅ |
+| 3c | Bug 3 + 1 + 4 | 能启动，但输出从开头就和 PP=1 不一样 | Bug 2 ⏳ |
+| 4 | 全部 | 和 PP=1 **10/10 完全一致** | 修复正确 ✅ |
+
+### Bug 4：中间结果工厂函数名字写错，静默返回 None ✅
+
+`NemotronHForCausalLM.__init__` 里写的是 `self.make_empty_intmd_tensors = ...`，而 V0 的 `model_runner.py`（1321 行 profile run、1422 行 CUDA graph capture）调用的是 `self.model.make_empty_intermediate_tensors(...)`。按理说名字不对应该报 `AttributeError`，但 NemotronH 继承了 `SupportsPP`，`interfaces.py` 310 行有一个同名的 Protocol 空方法（函数体只有 `...`），调用它返回 `None`。所以不会报错，非首 stage 拿到 `intermediate_tensors=None`，直到 forward 里的 `assert` 才挂。修复：在 `NemotronHForCausalLM` 上补一个正确名字的方法，转调 `make_empty_intmd_tensors`。
 
 ### Bug 3：load_weights 不跳过其他 stage 的层 ✅
 
