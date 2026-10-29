@@ -7,8 +7,8 @@
 # running; FORCE=1 overrides once the owner has agreed.
 set -euo pipefail
 
-IMAGE=${IMAGE:-niki/hybrid-pp:vllm0.10.1.1}
-NAME=${NAME:-niki-hpp}
+IMAGE=${IMAGE:-niki}
+NAME=${NAME:-nikihpp}
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 WORK_ROOT=$(dirname "$REPO_DIR")
 HF_CACHE=${HF_CACHE:-$WORK_ROOT/hf_cache}
