@@ -38,8 +38,12 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
   LAN_IF=$(ip -o -4 addr show | awk '$4 ~ /^192\.168\.0\./ {print $2; exit}')
   LAN_IP=$(ip -o -4 addr show | awk '$4 ~ /^192\.168\.0\./ {split($4, a, "/"); print a[1]; exit}')
   # Run as the host user so files written to the mounted dirs stay ours.
+  # --runtime=nvidia rather than --gpus: a `systemctl reload docker` picks up
+  # the runtime, while --gpus needs a docker restart that would bounce other
+  # users' containers.
   docker run -d --name "$NAME" \
-    --gpus all --ipc=host --network host --shm-size 16g \
+    --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all \
+    --ipc=host --network host --shm-size 16g \
     --user "$(id -u):$(id -g)" \
     -e HOME=/home/niki -e USER=niki -e LOGNAME=niki \
     -e NCCL_SOCKET_IFNAME="$LAN_IF" -e GLOO_SOCKET_IFNAME="$LAN_IF" \
