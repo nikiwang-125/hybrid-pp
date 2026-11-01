@@ -66,20 +66,38 @@ def pow2_bucket(series: pd.Series) -> pd.Series:
     return series.clip(lower=1).apply(lambda x: 1 << (int(x).bit_length() - 1))
 
 
+CPU_COLS = ["call_ms", "recv_ms", "exec_ms", "send_ms", "gap_ms"]
+
+
 def step_frame(steps: list[dict], skip: int) -> pd.DataFrame:
     rows = []
     for s in steps:
         if s["step"] < skip:
             continue
         ph = phase(s)
+        cpu = s.get("cpu") or {}
         rows.append({
             "run": s["run"], "pp_rank": s["pp_rank"], "step": s["step"],
             "graph": s.get("graph", False), "phase": ph,
             "batch": s.get("batch") or 0, "size": size_of(s, ph),
             "t_start_ms": s["t_start_ms"], "dur_ms": s["dur_ms"],
             "total_ms": s.get("total_ms", s["dur_ms"]),
+            "call_ms": cpu.get("call_ms"),
+            "recv_ms": cpu.get("recv_ms", 0.0) if cpu else None,
+            "exec_ms": cpu.get("exec_ms"),
+            "send_ms": cpu.get("send_ms", 0.0) if cpu else None,
+            "call_start": cpu.get("call_start"),
+            "call_end": cpu.get("call_end"),
         })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    # gap_ms: worker idle between two execute_model calls, i.e. waiting for
+    # the engine to hand it the next step
+    df = df.sort_values(["run", "pp_rank", "step"])
+    prev_end = df.groupby(["run", "pp_rank"]).call_end.shift()
+    df["gap_ms"] = (df.call_start - prev_end) * 1e3
+    return df
 
 
 def op_frame(steps: list[dict], skip: int) -> pd.DataFrame:
@@ -117,12 +135,23 @@ def breakdown(ops: pd.DataFrame, steps: pd.DataFrame) -> pd.DataFrame:
     agg = {k: (k, "mean") for k in kinds}
     agg.update(total_ms=("total_ms", "mean"), forward_ms=("dur_ms", "mean"),
                steps=("step", "size"), graph=("graph", "mean"))
+    agg.update({c: (c, "mean") for c in CPU_COLS if c in merged.columns})
     out = (merged.groupby(["pp_rank", "phase", "batch_bucket"]).agg(**agg)
            .reset_index())
     # whatever the per-layer events did not cover (graph decode, norms,
     # inter-op gaps) shows up here
     out["other_ms"] = out.total_ms - out[kinds].sum(axis=1)
     return out
+
+
+def breakdown_steps_only(steps: pd.DataFrame) -> pd.DataFrame:
+    """Breakdown without per-op rows (all steps were CUDA-graph replays)."""
+    steps = steps.assign(batch_bucket=pow2_bucket(steps["batch"]))
+    agg = dict(total_ms=("total_ms", "mean"), forward_ms=("dur_ms", "mean"),
+               steps=("step", "size"), graph=("graph", "mean"))
+    agg.update({c: (c, "mean") for c in CPU_COLS})
+    return (steps.groupby(["pp_rank", "phase", "batch_bucket"]).agg(**agg)
+            .reset_index())
 
 
 def stage_stats(steps: pd.DataFrame) -> pd.DataFrame:
@@ -173,7 +202,9 @@ def plot(cost: pd.DataFrame, bd: pd.DataFrame, steps: pd.DataFrame, out: str):
         key = bd.sort_values("steps").iloc[-1][["phase", "batch_bucket"]]
         sub = bd[(bd.phase == key.phase) &
                  (bd.batch_bucket == key.batch_bucket)].sort_values("pp_rank")
-        kinds = [k for k in KIND_ORDER if k in sub.columns] + ["other_ms"]
+        kinds = [k for k in KIND_ORDER + ["other_ms"] if k in sub.columns]
+        if not kinds:
+            kinds = ["total_ms"]
         fig, ax = plt.subplots(figsize=(5, 3.6))
         bottom = [0.0] * len(sub)
         for k in kinds:
@@ -237,6 +268,11 @@ def main():
               bd.round(3).to_string(index=False))
         print("\n== op cost by batch size (mean ms per op)\n" +
               by_batch.round(3).to_string(index=False))
+    else:
+        bd = breakdown_steps_only(steps)
+        bd.to_csv(os.path.join(args.out, "breakdown.csv"), index=False)
+        print("\n== per-stage breakdown (mean ms per step)\n" +
+              bd.round(3).to_string(index=False))
     plot(cost, bd, steps, args.out)
 
 

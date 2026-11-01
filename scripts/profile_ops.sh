@@ -12,12 +12,13 @@ MODEL=${MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}
 PARTITION=${PARTITION:-default}
 WORKLOADS=${WORKLOADS:-"512:256 2048:256"}
 CONCURRENCY=${CONCURRENCY:-"1 8 32"}
+MODES=${MODES:-"graph eager"}
 # 24GB cards: the fp32 mamba state is ~76 MiB per sequence on a 32-layer
 # stage, so runner's default of 64 sequences is too tight.
 MAX_SEQS=${MAX_SEQS:-32}
 OUT=${OUT:-results/ops}
 
-for mode in graph eager; do
+for mode in $MODES; do
   extra=()
   [ "$mode" = eager ] && extra=(--eager)
   for c in $CONCURRENCY; do
@@ -29,7 +30,7 @@ for mode in graph eager; do
   done
 done
 
-for mode in graph eager; do
+for mode in $MODES; do
   for c in $CONCURRENCY; do
     echo "################ $mode, concurrency $c"
     python -m hybrid_pp.analyze_profile "$OUT"/$mode/c$c/*/*/profile \

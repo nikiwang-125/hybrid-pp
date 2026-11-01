@@ -3,28 +3,35 @@ copy by hand from a box without file transfer.
 
     python scripts/summarize_ops.py                 # default, 30-26, 32-24
     python scripts/summarize_ops.py default 31-25
+    python scripts/summarize_ops.py --prefix ops2 28-28 29-27 30-26
 """
 
+import argparse
 import glob
 import json
 import os
-import sys
 
 import pandas as pd
 
-PARTITIONS = sys.argv[1:] or ["default", "30-26", "32-24"]
+ap = argparse.ArgumentParser()
+ap.add_argument("partitions", nargs="*", default=["default", "30-26", "32-24"])
+ap.add_argument("--prefix", default="ops",
+                help="results/<prefix>_<partition>/ (OUT of profile_ops.sh)")
+ARGS = ap.parse_args()
+PARTITIONS = ARGS.partitions
+PREFIX = ARGS.prefix
 WORKLOADS = ["512-256", "2048-256"]
 CONCURRENCY = [1, 8, 32]
 HEAD_OPS = ["embed", "lm_head", "sampler"]
 
 
 def bench(p, mode, c, w):
-    files = glob.glob(f"results/ops_{p}/{mode}/c{c}/*/{w}/bench.json")
+    files = glob.glob(f"results/{PREFIX}_{p}/{mode}/c{c}/*/{w}/bench.json")
     return json.load(open(files[0])) if files else None
 
 
 def summary_csv(p, mode, c, name):
-    path = f"results/ops_{p}/{mode}/c{c}/summary/{name}"
+    path = f"results/{PREFIX}_{p}/{mode}/c{c}/summary/{name}"
     return pd.read_csv(path) if os.path.exists(path) else None
 
 
@@ -88,3 +95,21 @@ for c in CONCURRENCY:
             vals.append(f"{last.loc[last.steps.idxmax(), 'total_ms']:.2f}")
         cells.append(f"{p}: {vals[0]} vs {vals[1]}")
     print(f"  c{c:<2} " + "   ".join(cells))
+
+print("\n== 5. graph mode, decode: CPU wall ms per step on each stage")
+print("     GPU = stage GPU time; exec = model runner on CPU (last stage waits")
+print("     for sampling); recv = waiting for previous stage; gap = waiting")
+print("     for the engine between steps")
+for c in CONCURRENCY:
+    for p in PARTITIONS:
+        d = summary_csv(p, "graph", c, "breakdown.csv")
+        if d is None or "exec_ms" not in d.columns:
+            continue
+        d = d[d.phase == "decode"]
+        if d.empty:
+            continue
+        d = d.loc[d.groupby("pp_rank").steps.idxmax()]
+        print(f"  c{c:<2} {p:<8} " + " | ".join(
+            f"s{int(r.pp_rank)} GPU={r.total_ms:.2f} exec={r.exec_ms:.2f} "
+            f"recv={r.recv_ms:.2f} send={r.send_ms:.2f} gap={r.gap_ms:.2f}"
+            for r in d.itertuples()))

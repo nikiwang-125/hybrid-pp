@@ -9,7 +9,11 @@ Enabled by HYBRID_PP_PROFILE_DIR. What gets timed:
   * "embed" (first stage), "lm_head" (``compute_logits``: lm_head GEMM plus
     logits processing) and "sampler" (last stage) -- in every step, because
     V0 runs them outside the CUDA graph;
-  * the whole stage forward of every step, eager or graph (``graph`` flag).
+  * the whole stage forward of every step, eager or graph (``graph`` flag);
+  * CPU wall time of the worker's ``execute_model`` call around each step,
+    split into waiting to receive from the previous stage, the model runner
+    (input prep, launches and, on the last stage, the sampler's GPU->CPU
+    sync and output building) and sending to the next stage (``cpu``).
 
 Memory profiling and CUDA-graph capture are not recorded.
 
@@ -25,7 +29,8 @@ Record format (one JSON object per line):
   {"kind": "mamba_cache", "bytes": ...}            (first eager step only)
   {"kind": "step", step, graph, t_start_ms, dur_ms, total_ms, num_prefills,
    num_prefill_tokens, num_decode_tokens, batch, ctx_sum, ctx_max, wall,
-   layers: [[layer_idx, kind, ms], ...]}
+   layers: [[layer_idx, kind, ms], ...],
+   cpu: {call_start, call_end (epoch s), call_ms, recv_ms, exec_ms, send_ms}}
 ``dur_ms`` covers the stage's model forward; ``total_ms`` runs until the end
 of the last op of the step (lm_head / sampler on the last stage). Ops outside
 the decoder layers use layer_idx -1. ``t_start_ms`` is on this GPU's
@@ -68,6 +73,7 @@ class _Recorder:
         self.current = None  # step whose model forward is running
         self.last = None  # latest finished forward, still collecting ops
         self.paused = 0
+        self.call = None  # CPU timings of the running execute_model call
         self.wrote_mamba_cache = False
 
     # -- output -------------------------------------------------------------
@@ -235,6 +241,48 @@ def _wrap_step(cls, get_inner, get_mamba, graph: bool):
     cls.forward = forward
 
 
+def _cpu_timed(fn, key: str):
+    """Add the wall time of ``fn`` to the running execute_model call."""
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        call = _recorder.call
+        if call is None:
+            return fn(self, *args, **kwargs)
+        t0 = time.perf_counter()
+        try:
+            return fn(self, *args, **kwargs)
+        finally:
+            call[key] = call.get(key, 0.0) + (time.perf_counter() - t0) * 1e3
+
+    return wrapper
+
+
+def _wrap_worker_call(cls):
+    """Time one worker step on the CPU and attach it to the step's record."""
+    orig = cls.execute_model
+
+    @functools.wraps(orig)
+    def execute_model(self, *args, **kwargs):
+        rec = _recorder
+        if not rec.recording():
+            return orig(self, *args, **kwargs)
+        step_before = rec.step
+        rec.call = {"call_start": time.time()}
+        t0 = time.perf_counter()
+        try:
+            return orig(self, *args, **kwargs)
+        finally:
+            call, rec.call = rec.call, None
+            call["call_ms"] = (time.perf_counter() - t0) * 1e3
+            call["call_end"] = time.time()
+            # rec.last stays pending until the next step begins
+            if rec.step > step_before and rec.last is not None:
+                rec.last["info"]["cpu"] = call
+
+    cls.execute_model = execute_model
+
+
 def _wrap_paused(cls, name):
     orig = getattr(cls, name)
 
@@ -251,9 +299,10 @@ def _wrap_paused(cls, name):
 
 def apply(out_dir: str, profile_layers: bool) -> None:
     global _recorder
+    from vllm.distributed import parallel_state
     from vllm.model_executor.layers.sampler import Sampler
     from vllm.model_executor.models import nemotron_h
-    from vllm.worker import model_runner
+    from vllm.worker import model_runner, worker_base
 
     _recorder = _Recorder(out_dir, profile_layers)
 
@@ -278,6 +327,15 @@ def apply(out_dir: str, profile_layers: bool) -> None:
 
     for name in ("profile_run", "capture_model"):
         _wrap_paused(model_runner.GPUModelRunnerBase, name)
+
+    group_cls = parallel_state.GroupCoordinator
+    group_cls.recv_tensor_dict = _cpu_timed(group_cls.recv_tensor_dict,
+                                            "recv_ms")
+    group_cls.send_tensor_dict = _cpu_timed(group_cls.send_tensor_dict,
+                                            "send_ms")
+    model_runner.ModelRunner.execute_model = _cpu_timed(
+        model_runner.ModelRunner.execute_model, "exec_ms")
+    _wrap_worker_call(worker_base.LocalOrDistributedWorkerBase)
 
     logger.info("[hybrid_pp] NemotronH profiler enabled (layers=%s)",
                 profile_layers)
