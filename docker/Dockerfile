@@ -2,6 +2,9 @@
 #   bash scripts/docker_run.sh build
 FROM vllm/vllm-openai:v0.10.1.1
 
+# The base image only ships python3; our scripts call python.
+RUN ln -sf "$(command -v python3)" /usr/local/bin/python
+
 # vllm 0.10.1.1 has no upper bound on transformers; 5.x breaks it.
 RUN pip install --no-cache-dir "transformers>=4.55,<4.56" pandas matplotlib
 
