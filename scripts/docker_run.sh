@@ -7,6 +7,9 @@
 # running; FORCE=1 overrides once the owner has agreed.
 set -euo pipefail
 
+# DOCKER="sudo docker" when this account is not in the docker group; the
+# container still runs as you, since id -u is evaluated outside sudo.
+DOCKER=${DOCKER:-docker}
 IMAGE=${IMAGE:-niki}
 NAME=${NAME:-nikihpp}
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
@@ -16,10 +19,10 @@ CHOME=${CHOME:-$WORK_ROOT/container_home}
 
 case "${1:-shell}" in
   build)
-    docker build -t "$IMAGE" "$REPO_DIR/docker"
+    $DOCKER build -t "$IMAGE" "$REPO_DIR/docker"
     exit ;;
   stop)
-    docker rm -f "$NAME"
+    $DOCKER rm -f "$NAME"
     exit ;;
 esac
 
@@ -31,8 +34,8 @@ if [ -n "$busy" ] && [ -z "${FORCE:-}" ]; then
   exit 1
 fi
 
-if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
+if ! $DOCKER ps --format '{{.Names}}' | grep -qx "$NAME"; then
+  $DOCKER rm -f "$NAME" >/dev/null 2>&1 || true
   mkdir -p "$HF_CACHE" "$CHOME"
   # NCCL, Gloo and Ray must use the 192.168.0.x LAN, not docker0 (172.17.x).
   LAN_IF=$(ip -o -4 addr show | awk '$4 ~ /^192\.168\.0\./ {print $2; exit}')
@@ -41,7 +44,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
   # --runtime=nvidia rather than --gpus: a `systemctl reload docker` picks up
   # the runtime, while --gpus needs a docker restart that would bounce other
   # users' containers.
-  docker run -d --name "$NAME" \
+  $DOCKER run -d --name "$NAME" \
     --runtime=nvidia -e NVIDIA_VISIBLE_DEVICES=all \
     --ipc=host --network host --shm-size 16g \
     --user "$(id -u):$(id -g)" \
@@ -54,4 +57,4 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
     "$IMAGE" sleep infinity >/dev/null
   echo "started $NAME (LAN $LAN_IF $LAN_IP)"
 fi
-exec docker exec -it "$NAME" bash
+exec $DOCKER exec -it "$NAME" bash
