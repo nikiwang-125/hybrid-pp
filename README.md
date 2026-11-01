@@ -26,13 +26,13 @@ mkdir -p logs && bash scripts/day1.sh 2>&1 | tee logs/day1.log   # 第一天全�
 | `hybrid_pp/plugin.py` | vLLM 插件入口，按环境变量启用各补丁 |
 | `hybrid_pp/patches/nemotron_h_pp.py` | 修复 NemotronH 的 4 个 PP bug（加载权重不跳过其他 stage 的层、遍历了所有层、residual 被清空、中间结果工厂函数名写错） |
 | `hybrid_pp/patches/stage_memory.py` | 每个 stage 打印显存明细；允许没有 attention 层的 stage 启动 |
-| `hybrid_pp/profiler.py` | 用 CUDA event 记录每步、每层的 GPU 耗时（需要 `--enforce-eager`） |
+| `hybrid_pp/profiler.py` | 用 CUDA event 记录每步、每层以及 embed/lm_head/sampler 的 GPU 耗时（decode 的逐层耗时需要 `--enforce-eager`） |
 | `hybrid_pp/model_info.py` | 不需要 GPU：分析任意切分下各 stage 的层构成和显存估算 |
 | `hybrid_pp/correctness.py` | 对比 PP=1 和 PP=N 的 greedy 输出 |
 | `hybrid_pp/runner.py` | 批量实验：切分 × 负载，调用 `vllm bench serve` |
 | `hybrid_pp/analyze_memory.py` | 从 server.log 算出各 stage 的 KV 预算、实际使用量和浪费量 |
 | `hybrid_pp/analyze_profile.py` | 每类层的耗时曲线、各 stage 的耗时和忙碌率，并画图 |
-| `scripts/` | 环境安装、环境检查、手动起服务、第一天流程 |
+| `scripts/` | 环境安装、环境检查、手动起服务、第一天流程；`profile_ops.sh` 测每层和 lm_head 的耗时 |
 | `docs/findings.md` | 读 vLLM 源码发现的问题（带行号） |
 | `docs/plan.md` | 研究计划清单 |
 

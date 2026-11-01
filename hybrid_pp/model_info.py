@@ -112,6 +112,12 @@ def stage_table(cfg: dict, partition: list[int], dtype_bytes: int = 2,
         end = start + n
         seg = pattern[start:end]
         weight = sum(params[start:end])
+        # Decode is weight-bandwidth bound: every step reads all stage layer
+        # weights, plus the vocab x hidden lm_head GEMM on the last stage. The
+        # embedding is a row lookup on the first stage.
+        decode_read = weight
+        if rank == len(partition) - 1:
+            decode_read += vocab * h
         # vLLM v0.10.1.1 NemotronH builds embed_tokens and lm_head on every
         # stage, not only on the first / last one (docs/findings.md).
         weight += 2 * vocab * h
@@ -124,6 +130,7 @@ def stage_table(cfg: dict, partition: list[int], dtype_bytes: int = 2,
             "attention": n_attn,
             "mlp": seg.count("-"),
             "weights_gib": weight * dtype_bytes / tp / GIB,
+            "decode_read_gib": decode_read * dtype_bytes / tp / GIB,
             "kv_bytes_per_token": 2 * kv_heads * head_dim * dtype_bytes * n_attn,
             "mamba_bytes_per_seq": n_mamba * (conv_state + ssm_state),
         })
@@ -133,12 +140,18 @@ def stage_table(cfg: dict, partition: list[int], dtype_bytes: int = 2,
 
 def print_table(rows: list[dict]) -> None:
     print(f"{'rank':>4} {'layers':>9} {'M':>3} {'*':>3} {'-':>3} "
-          f"{'weights':>9} {'KV/token':>10} {'mamba/seq':>10}  pattern")
+          f"{'weights':>9} {'dec.read':>9} {'KV/token':>10} {'mamba/seq':>10}"
+          "  pattern")
     for r in rows:
         print(f"{r['pp_rank']:>4} {r['layers']:>9} {r['mamba']:>3} "
               f"{r['attention']:>3} {r['mlp']:>3} {r['weights_gib']:>7.2f}Gi "
+              f"{r['decode_read_gib']:>7.2f}Gi "
               f"{r['kv_bytes_per_token'] / 1024:>8.1f}Ki "
               f"{r['mamba_bytes_per_seq'] / (1 << 20):>8.1f}Mi  {r['pattern']}")
+    reads = [r["decode_read_gib"] for r in rows]
+    print(f"decode weight-read imbalance (max/mean): "
+          f"{max(reads) / (sum(reads) / len(reads)):.3f}  "
+          "(short-context decode is roughly proportional to this)")
     if any(r["attention"] == 0 for r in rows):
         print("NOTE: a stage has no attention layer; vLLM v0.10.1.1 V0 fails "
               "to start for this partition unless the hybrid_pp plugin's "

@@ -1,16 +1,22 @@
-"""Summarize hybrid_pp profiler traces: per-layer-type cost and stage balance.
+"""Summarize hybrid_pp profiler traces: per-op cost and per-stage breakdown.
 
-    python -m hybrid_pp.analyze_profile results/layers/default/*/profile \
-        --out results/layers/summary
+    python -m hybrid_pp.analyze_profile results/prof/default/*/profile \
+        --out results/prof/summary
 
 Writes
-  layers.csv       one row per (step, layer): phase, kind, ms, batch features
-  layer_cost.csv   mean ms per layer, by phase / kind / size bucket
-  stages.csv       per pp_rank: step time stats and GPU busy ratio
-  layer_cost.png, stage_time.png   (if matplotlib is installed)
+  ops.csv          one row per (step, op): phase, kind, layer, ms, batch info
+  layer_cost.csv   mean ms per op, by phase / kind / context-length bucket
+  op_by_batch.csv  mean ms per op, by phase / kind / batch-size bucket
+                   (lm_head and sampler scale with batch, not context)
+  breakdown.csv    per stage, phase, batch bucket: mean ms per step spent in
+                   each kind (sum over that stage's layers) and the stage total
+  stages.csv       per stage: step time stats and GPU busy ratio
+  layer_cost.png, breakdown.png, stage_time.png   (if matplotlib is installed)
 
 Phases: "prefill" (no decode tokens), "decode" (no prefills), "mixed".
 Decode size = mean context length per sequence; prefill size = prefill tokens.
+Per-layer rows exist only for eager steps; CUDA-graph decode steps still
+contribute stage totals and the embed / lm_head / sampler ops.
 """
 
 import argparse
@@ -20,12 +26,15 @@ import os
 
 import pandas as pd
 
+KIND_ORDER = ["embed", "mamba", "attention", "mlp", "lm_head", "sampler"]
+
 
 def load_traces(dirs: list[str]):
     metas, steps = [], []
     for d in dirs:
         for path in sorted(glob.glob(os.path.join(d, "*.jsonl"))):
             run = os.path.dirname(os.path.abspath(path))
+            pp_rank = None
             with open(path) as f:
                 for line in f:
                     rec = json.loads(line)
@@ -53,7 +62,27 @@ def size_of(step: dict, ph: str) -> float:
     return step.get("num_prefill_tokens") or 0
 
 
-def layer_rows(steps: list[dict], skip: int) -> pd.DataFrame:
+def pow2_bucket(series: pd.Series) -> pd.Series:
+    return series.clip(lower=1).apply(lambda x: 1 << (int(x).bit_length() - 1))
+
+
+def step_frame(steps: list[dict], skip: int) -> pd.DataFrame:
+    rows = []
+    for s in steps:
+        if s["step"] < skip:
+            continue
+        ph = phase(s)
+        rows.append({
+            "run": s["run"], "pp_rank": s["pp_rank"], "step": s["step"],
+            "graph": s.get("graph", False), "phase": ph,
+            "batch": s.get("batch") or 0, "size": size_of(s, ph),
+            "t_start_ms": s["t_start_ms"], "dur_ms": s["dur_ms"],
+            "total_ms": s.get("total_ms", s["dur_ms"]),
+        })
+    return pd.DataFrame(rows)
+
+
+def op_frame(steps: list[dict], skip: int) -> pd.DataFrame:
     rows = []
     for s in steps:
         if s["step"] < skip:
@@ -62,44 +91,55 @@ def layer_rows(steps: list[dict], skip: int) -> pd.DataFrame:
         for idx, kind, ms in s.get("layers", []):
             rows.append({
                 "run": s["run"], "pp_rank": s["pp_rank"], "step": s["step"],
-                "phase": ph, "kind": kind, "layer": idx, "ms": ms,
-                "batch": s.get("batch"), "size": size_of(s, ph),
-                "num_tokens": (s.get("num_prefill_tokens") or 0) +
-                              (s.get("num_decode_tokens") or 0),
+                "graph": s.get("graph", False), "phase": ph, "kind": kind,
+                "layer": idx, "ms": ms, "batch": s.get("batch") or 0,
+                "size": size_of(s, ph),
             })
     return pd.DataFrame(rows)
 
 
-def stage_rows(steps: list[dict], skip: int) -> pd.DataFrame:
-    df = pd.DataFrame([{
-        "run": s["run"], "pp_rank": s["pp_rank"], "step": s["step"],
-        "t_start_ms": s["t_start_ms"], "dur_ms": s["dur_ms"],
-        "phase": phase(s),
-    } for s in steps if s["step"] >= skip])
-    out = []
-    for (run, rank), g in df.groupby(["run", "pp_rank"]):
-        span = (g.t_start_ms + g.dur_ms).max() - g.t_start_ms.min()
-        out.append({
-            "run": run, "pp_rank": rank, "steps": len(g),
-            "mean_step_ms": g.dur_ms.mean(), "p50_step_ms": g.dur_ms.median(),
-            "p99_step_ms": g.dur_ms.quantile(0.99),
-            "busy_ratio": g.dur_ms.sum() / span if span > 0 else float("nan"),
-        })
-    return df, pd.DataFrame(out)
-
-
-def bucketize(df: pd.DataFrame) -> pd.DataFrame:
-    # power-of-two buckets keep prefill and decode sizes on one scale
-    df = df.copy()
-    df["bucket"] = (2 ** (df["size"].clip(lower=1).apply(
-        lambda x: int(x).bit_length() - 1))).astype(int)
+def mean_by(df: pd.DataFrame, bucket_col: str) -> pd.DataFrame:
+    df = df.assign(bucket=pow2_bucket(df[bucket_col]))
     return (df.groupby(["phase", "kind", "bucket"])
             .agg(mean_ms=("ms", "mean"), std_ms=("ms", "std"),
-                 samples=("ms", "size"), mean_batch=("batch", "mean"))
+                 samples=("ms", "size"))
             .reset_index())
 
 
-def plot(cost: pd.DataFrame, steps_df: pd.DataFrame, out: str):
+def breakdown(ops: pd.DataFrame, steps: pd.DataFrame) -> pd.DataFrame:
+    """Mean per-step time of each op kind on each stage."""
+    per_step = (ops.groupby(["run", "pp_rank", "step", "kind"]).ms.sum()
+                .unstack("kind", fill_value=0.0).reset_index())
+    merged = steps.merge(per_step, on=["run", "pp_rank", "step"], how="left")
+    kinds = [k for k in KIND_ORDER if k in merged.columns]
+    merged[kinds] = merged[kinds].fillna(0.0)
+    merged["batch_bucket"] = pow2_bucket(merged["batch"])
+    agg = {k: (k, "mean") for k in kinds}
+    agg.update(total_ms=("total_ms", "mean"), forward_ms=("dur_ms", "mean"),
+               steps=("step", "size"), graph=("graph", "mean"))
+    out = (merged.groupby(["pp_rank", "phase", "batch_bucket"]).agg(**agg)
+           .reset_index())
+    # whatever the per-layer events did not cover (graph decode, norms,
+    # inter-op gaps) shows up here
+    out["other_ms"] = out.total_ms - out[kinds].sum(axis=1)
+    return out
+
+
+def stage_stats(steps: pd.DataFrame) -> pd.DataFrame:
+    out = []
+    for (run, rank), g in steps.groupby(["run", "pp_rank"]):
+        span = (g.t_start_ms + g.total_ms).max() - g.t_start_ms.min()
+        out.append({
+            "run": run, "pp_rank": rank, "steps": len(g),
+            "mean_step_ms": g.total_ms.mean(),
+            "p50_step_ms": g.total_ms.median(),
+            "p99_step_ms": g.total_ms.quantile(0.99),
+            "busy_ratio": g.total_ms.sum() / span if span > 0 else float("nan"),
+        })
+    return pd.DataFrame(out)
+
+
+def plot(cost: pd.DataFrame, bd: pd.DataFrame, steps: pd.DataFrame, out: str):
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -108,12 +148,15 @@ def plot(cost: pd.DataFrame, steps_df: pd.DataFrame, out: str):
         print("matplotlib not installed; skipping plots")
         return
 
-    phases = [p for p in ("prefill", "decode") if p in set(cost.phase)]
+    layer_kinds = {"mamba", "attention", "mlp"}
+    phases = [p for p in ("prefill", "decode")
+              if p in set(cost.phase) and
+              set(cost[cost.phase == p].kind) & layer_kinds]
     if phases:
         fig, axes = plt.subplots(1, len(phases), figsize=(5 * len(phases), 3.6),
                                  squeeze=False)
         for ax, ph in zip(axes[0], phases):
-            sub = cost[cost.phase == ph]
+            sub = cost[(cost.phase == ph) & cost.kind.isin(layer_kinds)]
             for kind, g in sub.groupby("kind"):
                 ax.plot(g.bucket, g.mean_ms, marker="o", label=kind)
             ax.set_xscale("log", base=2)
@@ -125,10 +168,29 @@ def plot(cost: pd.DataFrame, steps_df: pd.DataFrame, out: str):
         fig.tight_layout()
         fig.savefig(os.path.join(out, "layer_cost.png"), dpi=150)
 
-    if not steps_df.empty:
+    if not bd.empty:
+        # one bar per stage, for the most common (phase, batch bucket)
+        key = bd.sort_values("steps").iloc[-1][["phase", "batch_bucket"]]
+        sub = bd[(bd.phase == key.phase) &
+                 (bd.batch_bucket == key.batch_bucket)].sort_values("pp_rank")
+        kinds = [k for k in KIND_ORDER if k in sub.columns] + ["other_ms"]
         fig, ax = plt.subplots(figsize=(5, 3.6))
-        ranks = sorted(steps_df.pp_rank.unique())
-        ax.boxplot([steps_df[steps_df.pp_rank == r].dur_ms for r in ranks],
+        bottom = [0.0] * len(sub)
+        for k in kinds:
+            vals = sub[k].clip(lower=0).tolist()
+            ax.bar([f"stage {r}" for r in sub.pp_rank], vals, bottom=bottom,
+                   label=k.replace("_ms", ""))
+            bottom = [b + v for b, v in zip(bottom, vals)]
+        ax.set_ylabel("ms per step")
+        ax.set_title(f"{key.phase}, batch ~{key.batch_bucket}")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+        fig.savefig(os.path.join(out, "breakdown.png"), dpi=150)
+
+    if not steps.empty:
+        fig, ax = plt.subplots(figsize=(5, 3.6))
+        ranks = sorted(steps.pp_rank.unique())
+        ax.boxplot([steps[steps.pp_rank == r].total_ms for r in ranks],
                    showfliers=False)
         ax.set_xticks(range(1, len(ranks) + 1), [f"stage {r}" for r in ranks])
         ax.set_ylabel("step time on stage (ms)")
@@ -141,32 +203,41 @@ def main():
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument("profile_dirs", nargs="+")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--skip-steps", type=int, default=2,
-                    help="drop the first N steps per worker (memory "
-                    "profiling / warm-up)")
+    ap.add_argument("--skip-steps", type=int, default=0,
+                    help="drop the first N recorded steps per worker "
+                    "(memory profiling and graph capture are never recorded)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    pd.set_option("display.width", 200)
 
-    metas, steps = load_traces(args.profile_dirs)
-    if not steps:
+    metas, raw = load_traces(args.profile_dirs)
+    if not raw:
         raise SystemExit("no step records found")
     for m in metas:
         print(f"pp_rank {m['pp_rank']}: layers [{m['start_layer']},"
               f"{m['end_layer']}) {m['stage_pattern']}  params "
               f"{m['stage_param_bytes'] / (1 << 30):.2f} GiB")
 
-    layers = layer_rows(steps, args.skip_steps)
-    steps_df, stages = stage_rows(steps, args.skip_steps)
+    steps = step_frame(raw, args.skip_steps)
+    ops = op_frame(raw, args.skip_steps)
+    stages = stage_stats(steps)
     stages.to_csv(os.path.join(args.out, "stages.csv"), index=False)
-    print(stages.to_string(index=False))
+    print("\n== stage step time\n" + stages.to_string(index=False))
 
-    cost = pd.DataFrame()
-    if not layers.empty:
-        layers.to_csv(os.path.join(args.out, "layers.csv"), index=False)
-        cost = bucketize(layers)
+    cost, bd = pd.DataFrame(), pd.DataFrame()
+    if not ops.empty:
+        ops.to_csv(os.path.join(args.out, "ops.csv"), index=False)
+        cost = mean_by(ops, "size")
         cost.to_csv(os.path.join(args.out, "layer_cost.csv"), index=False)
-        print(cost.to_string(index=False))
-    plot(cost, steps_df, args.out)
+        by_batch = mean_by(ops, "batch")
+        by_batch.to_csv(os.path.join(args.out, "op_by_batch.csv"), index=False)
+        bd = breakdown(ops, steps)
+        bd.to_csv(os.path.join(args.out, "breakdown.csv"), index=False)
+        print("\n== per-stage breakdown (mean ms per step)\n" +
+              bd.round(3).to_string(index=False))
+        print("\n== op cost by batch size (mean ms per op)\n" +
+              by_batch.round(3).to_string(index=False))
+    plot(cost, bd, steps, args.out)
 
 
 if __name__ == "__main__":

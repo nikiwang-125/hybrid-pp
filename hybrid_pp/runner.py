@@ -67,10 +67,10 @@ def main():
     ap.add_argument("--max-num-seqs", type=int, default=64)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.9)
     ap.add_argument("--profile", action="store_true",
-                    help="enable the hybrid_pp profiler (implies "
-                    "--enforce-eager and one server per workload)")
+                    help="enable the hybrid_pp profiler (one server per "
+                    "workload); add --eager for per-layer decode timing")
     ap.add_argument("--eager", action="store_true",
-                    help="--enforce-eager without profiling")
+                    help="pass --enforce-eager to vllm serve")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--out", required=True)
     ap.add_argument("--serve-arg", action="append", default=[],
@@ -79,7 +79,7 @@ def main():
     args = ap.parse_args()
 
     workloads = [parse_workload(w) for w in args.workloads]
-    eager = args.eager or args.profile
+    eager = args.eager
 
     for partition in args.partitions:
         p_tag = "default" if partition == "default" else partition.replace(
