@@ -12,6 +12,9 @@ MODEL=${MODEL:-nvidia/NVIDIA-Nemotron-Nano-9B-v2}
 PARTITION=${PARTITION:-default}
 WORKLOADS=${WORKLOADS:-"512:256 2048:256"}
 CONCURRENCY=${CONCURRENCY:-"1 8 32"}
+# 24GB cards: the fp32 mamba state is ~76 MiB per sequence on a 32-layer
+# stage, so runner's default of 64 sequences is too tight.
+MAX_SEQS=${MAX_SEQS:-32}
 OUT=${OUT:-results/ops}
 
 for mode in graph eager; do
@@ -21,6 +24,7 @@ for mode in graph eager; do
     python -m hybrid_pp.runner --model "$MODEL" --pp 2 --profile "${extra[@]}" \
       --partitions "$PARTITION" --workloads $WORKLOADS \
       --num-prompts $((c * 8)) --concurrency "$c" --max-model-len 8192 \
+      --max-num-seqs "$MAX_SEQS" \
       --out "$OUT/$mode/c$c"
   done
 done
