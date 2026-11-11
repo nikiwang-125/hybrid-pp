@@ -1,0 +1,21 @@
+{
+ "capture": {
+  "thr8k": 21,
+  "thr16k": 13
+ },
+ "spmd": {
+  "n": 3,
+  "base1k": 231.1,
+  "spmd1k": 321.0,
+  "base8k": 70.8,
+  "spmd8k": 103.0,
+  "thr1k": 39,
+  "thr8k": 45,
+  "tpot_base1k": 57.9,
+  "tpot_spmd1k": 37.5,
+  "tpot1k": -35,
+  "tpot_base8k": 145.0,
+  "tpot_spmd8k": 75.8,
+  "tpot8k": -48
+ }
+}

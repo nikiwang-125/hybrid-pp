@@ -60,6 +60,12 @@ def register() -> None:
     if _flag("HYBRID_PP_FIX_NOATTN") or _flag("HYBRID_PP_STAGE_MEM_LOG"):
         stage_memory.apply(fix_no_attention=_flag("HYBRID_PP_FIX_NOATTN"),
                            log_stage_memory=_flag("HYBRID_PP_STAGE_MEM_LOG"))
+    if _flag("HYBRID_PP_FIX_SPMD"):
+        from hybrid_pp.patches import spmd_fix
+        spmd_fix.apply()
+    if _flag("HYBRID_PP_CAPTURE_TIMING", "0"):
+        from hybrid_pp.patches import capture_timing
+        capture_timing.apply()
     if os.environ.get("HYBRID_PP_PROFILE_DIR"):
         from hybrid_pp import profiler
         profiler.apply(out_dir=os.environ["HYBRID_PP_PROFILE_DIR"],

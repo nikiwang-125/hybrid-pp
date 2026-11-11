@@ -197,7 +197,7 @@ class Req:
 
 def simulate(stage_model, comm, partition, inp, out, num_prompts, concurrency,
              max_num_seqs=16, overhead_ms=0.0, cross=(1,), pp=4,
-             max_batched_tokens=None):
+             max_batched_tokens=None, overhead_per_kctx=0.0):
     """Return dict with throughput, TTFT, TPOT and per-stage busy time."""
     sts = stages_of(partition)
     pp = len(sts)
@@ -264,7 +264,11 @@ def simulate(stage_model, comm, partition, inp, out, num_prompts, concurrency,
         t, _, kind, p = heapq.heappop(ev)
         v, s, phase, kw, ctoks, batch = p
         start = max(t, stage_free[s])
-        dur = predict_stage(stage_model, sts[s], phase, **kw) + overhead_ms
+        # non-GPU cost per stage step; grows with the context the driver
+        # has to package per step (token lists, block tables)
+        ctx_k = kw.get("ctx_sum", kw.get("tokens", 0)) / 1000.0
+        dur = predict_stage(stage_model, sts[s], phase, **kw) + overhead_ms \
+            + overhead_per_kctx * ctx_k
         end = start + dur
         stage_free[s] = end; busy[s] += dur
         if s + 1 < pp:
@@ -338,7 +342,7 @@ def cmd_fit(a):
             print(f"  holdout stage {ph}: n={len(y)} median rel err {hold_err[ph]:.1%}")
     comm = load_comm(a.comm)
 
-    def sim_for(r, oh):
+    def sim_for(r, oh, ohk=0.0):
         b = bench_of(r[3])
         cfg = json.load(open(os.path.join(a.runs, "args.json"))) \
             if os.path.exists(os.path.join(a.runs, "args.json")) else {}
@@ -346,26 +350,30 @@ def cmd_fit(a):
                         cfg.get("num_prompts", a.num_prompts),
                         cfg.get("concurrency", a.concurrency),
                         max_num_seqs=cfg.get("max_num_seqs", a.max_num_seqs),
-                        overhead_ms=oh), b
+                        overhead_ms=oh, overhead_per_kctx=ohk), b
 
     # calibrate the per-step driver overhead on training runs (grid search on
     # TPOT, which is what the overhead mostly shifts)
+    # two-parameter calibration on training runs only: fixed + per-1K-ctx
     best = None
-    for oh in np.arange(0.0, 15.01, 0.25):
-        errs = []
-        for r in train:
-            s, b = sim_for(r, oh)
-            if b:
-                errs.append(abs(s["median_tpot_ms"] - b["median_tpot_ms"]) / b["median_tpot_ms"])
-        e = statistics.median(errs) if errs else float("inf")
-        if best is None or e < best[1]:
-            best = (float(oh), e)
-    oh = best[0]
-    print(f"  calibrated non-GPU overhead per stage: {oh:.2f} ms (train median TPOT err {best[1]:.1%})")
+    grid_k = [0.0] if a.fixed_overhead else list(np.arange(0.0, 1.01, 0.05))
+    for ohk in grid_k:
+        for oh in np.arange(0.0, 15.01, 0.5):
+            errs = []
+            for r in train:
+                s, b = sim_for(r, oh, ohk)
+                if b:
+                    errs.append(abs(s["median_tpot_ms"] - b["median_tpot_ms"]) / b["median_tpot_ms"])
+            e = statistics.mean(errs) if errs else float("inf")
+            if best is None or e < best[2]:
+                best = (float(oh), float(ohk), e)
+    oh, ohk = best[0], best[1]
+    print(f"  calibrated non-GPU overhead per stage: {oh:.2f} ms + {ohk:.2f} ms per 1K context "
+          f"(train mean TPOT err {best[2]:.1%})")
 
     rows = []
     for r in runs:
-        s, b = sim_for(r, oh)
+        s, b = sim_for(r, oh, ohk)
         row = {"partition": r[0], "workload": f"{r[1]}:{r[2]}",
                "split": "holdout" if r in test else "train"}
         for k in ("output_throughput", "median_ttft_ms", "median_tpot_ms", "mean_ttft_ms", "mean_tpot_ms"):
@@ -382,6 +390,7 @@ def cmd_fit(a):
         print(f"{w['partition']:14s} {w['workload']:10s} {w['split']:8s} "
               f"{pm('output_throughput'):>18s} {pm('median_ttft_ms'):>22s} {pm('median_tpot_ms'):>22s}")
     out = {"stage_model": sm, "holdout_stage_err": hold_err, "overhead_ms": oh,
+           "overhead_per_kctx": ohk,
            "comm": comm, "holdout": hold, "runs": rows}
     path = os.path.join(a.runs, "sim_model.json")
     json.dump(out, open(path, "w"), indent=1)
@@ -424,6 +433,7 @@ def capacity_check(partition, cfg, budget_gib, runtime_gib, slots, need_tokens):
 def cmd_search(a):
     m = json.load(open(a.model_file))
     sm, comm, oh = m["stage_model"], m["comm"], m["overhead_ms"]
+    ohk = m.get("overhead_per_kctx", 0.0)
     loads = [tuple(int(x) for x in w.split(":")) for w in a.workloads]
     parts = all_partitions()
     cfg = None
@@ -468,7 +478,8 @@ def cmd_search(a):
             row["stage_free_gib"] = [round(c["free_gib"], 2) for c in crow]
         for inp, out in loads:
             s = simulate(sm, comm, p, inp, out, a.num_prompts, a.concurrency,
-                         max_num_seqs=a.max_num_seqs, overhead_ms=oh)
+                         max_num_seqs=a.max_num_seqs, overhead_ms=oh,
+                         overhead_per_kctx=ohk)
             row[f"{inp}:{out}"] = s
         table.append(row)
     key = f"{loads[0][0]}:{loads[0][1]}"
@@ -492,6 +503,8 @@ def main():
     f.add_argument("--runs", required=True)
     f.add_argument("--holdout", default=None)
     f.add_argument("--comm", default="results/comm/comm.json")
+    f.add_argument("--fixed-overhead", action="store_true",
+                   help="old one-parameter calibration (constant per stage)")
     s = sub.add_parser("search")
     s.add_argument("--model-file", required=True)
     s.add_argument("--workloads", nargs="+", default=["1024:128", "8192:128"])

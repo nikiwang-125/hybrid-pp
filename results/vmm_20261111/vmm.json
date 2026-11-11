@@ -1,0 +1,119 @@
+{
+ "config": {
+  "out": "results/vmm_20261111/vmm.json",
+  "kv_mib": 6144,
+  "weights_mib": 844,
+  "page_mib": 2,
+  "rounds": 5
+ },
+ "gpu": "NVIDIA GeForce RTX 3090",
+ "vmm": {
+  "info": {
+   "page_bytes": 2097152,
+   "kv_pages": 3072,
+   "pages_handed_to_weights": 422,
+   "kv_bytes": 6442450944,
+   "weight_bytes": 884998144
+  },
+  "checks": [
+   {
+    "round": 0,
+    "kv_base_unchanged": true,
+    "graph_result_ok": true,
+    "kept_kv_intact": true,
+    "weights_ok": true
+   },
+   {
+    "round": 1,
+    "kv_base_unchanged": true,
+    "graph_result_ok": true,
+    "kept_kv_intact": true,
+    "weights_ok": true
+   },
+   {
+    "round": 2,
+    "kv_base_unchanged": true,
+    "graph_result_ok": true,
+    "kept_kv_intact": true,
+    "weights_ok": true
+   },
+   {
+    "round": 3,
+    "kv_base_unchanged": true,
+    "graph_result_ok": true,
+    "kept_kv_intact": true,
+    "weights_ok": true
+   },
+   {
+    "round": 4,
+    "kv_base_unchanged": true,
+    "graph_result_ok": true,
+    "kept_kv_intact": true,
+    "weights_ok": true
+   }
+  ],
+  "ms_median_excl_first": {
+   "1_shrink_kv_unmap_release": 32.74893411435187,
+   "2_map_weight_pages": 21.086259046569467,
+   "3_copy_weights_from_pinned": 36.15463664755225,
+   "4_replay_graph_on_kept_kv": 6.272124825045466,
+   "5_release_weight_pages": 32.80824399553239,
+   "6_grow_kv_back": 21.144912810996175
+  },
+  "ms_first": {
+   "1_shrink_kv_unmap_release": 36.57082375138998,
+   "2_map_weight_pages": 22.082146257162094,
+   "3_copy_weights_from_pinned": 37.47860202565789,
+   "4_replay_graph_on_kept_kv": 6.298630964010954,
+   "5_release_weight_pages": 35.746532026678324,
+   "6_grow_kv_back": 21.77069801837206
+  }
+ },
+ "torch": {
+  "info": {},
+  "checks": [
+   {
+    "round": 0,
+    "kv_base_unchanged": false,
+    "kept_kv_intact": false,
+    "graph_valid": "no: graph points at freed memory, must be recaptured (not replayed: unsafe)"
+   },
+   {
+    "round": 1,
+    "kv_base_unchanged": false,
+    "kept_kv_intact": false,
+    "graph_valid": "no: graph points at freed memory, must be recaptured (not replayed: unsafe)"
+   },
+   {
+    "round": 2,
+    "kv_base_unchanged": false,
+    "kept_kv_intact": false,
+    "graph_valid": "no: graph points at freed memory, must be recaptured (not replayed: unsafe)"
+   },
+   {
+    "round": 3,
+    "kv_base_unchanged": false,
+    "kept_kv_intact": false,
+    "graph_valid": "no: graph points at freed memory, must be recaptured (not replayed: unsafe)"
+   },
+   {
+    "round": 4,
+    "kv_base_unchanged": false,
+    "kept_kv_intact": false,
+    "graph_valid": "no: graph points at freed memory, must be recaptured (not replayed: unsafe)"
+   }
+  ],
+  "ms_median_excl_first": {
+   "1_free_kv_and_empty_cache": 3.985227085649967,
+   "2_alloc_weights": 2.0903630647808313,
+   "3_copy_weights_from_pinned": 72.84012250602245,
+   "4_alloc_smaller_kv_zeroed": 8.76732962206006
+  },
+  "ms_first": {
+   "1_free_kv_and_empty_cache": 4.229237791150808,
+   "2_alloc_weights": 1.3450677506625652,
+   "3_copy_weights_from_pinned": 73.17375810816884,
+   "4_alloc_smaller_kv_zeroed": 8.771867025643587
+  }
+ }
+}

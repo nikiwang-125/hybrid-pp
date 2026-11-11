@@ -1,0 +1,97 @@
+{
+ "identical": 7,
+ "total": 7,
+ "rows": [
+  {
+   "i": 0,
+   "kind": "short",
+   "identical": true,
+   "common_prefix_chars": 1886,
+   "len_default": 1886,
+   "len_raised": 1886
+  },
+  {
+   "i": 1,
+   "kind": "short",
+   "identical": true,
+   "common_prefix_chars": 1997,
+   "len_default": 1997,
+   "len_raised": 1997
+  },
+  {
+   "i": 2,
+   "kind": "short",
+   "identical": true,
+   "common_prefix_chars": 651,
+   "len_default": 651,
+   "len_raised": 651
+  },
+  {
+   "i": 3,
+   "kind": "long",
+   "identical": true,
+   "common_prefix_chars": 740,
+   "len_default": 740,
+   "len_raised": 740,
+   "tokens": 9760,
+   "answers_found_default": 2,
+   "answers_found_raised": 2,
+   "answers_total": 3
+  },
+  {
+   "i": 4,
+   "kind": "long",
+   "identical": true,
+   "common_prefix_chars": 959,
+   "len_default": 959,
+   "len_raised": 959,
+   "tokens": 11949,
+   "answers_found_default": 3,
+   "answers_found_raised": 3,
+   "answers_total": 3
+  },
+  {
+   "i": 5,
+   "kind": "long",
+   "identical": true,
+   "common_prefix_chars": 739,
+   "len_default": 739,
+   "len_raised": 739,
+   "tokens": 13063,
+   "answers_found_default": 3,
+   "answers_found_raised": 3,
+   "answers_total": 3
+  },
+  {
+   "i": 6,
+   "kind": "long",
+   "identical": true,
+   "common_prefix_chars": 790,
+   "len_default": 790,
+   "len_raised": 790,
+   "tokens": 15255,
+   "answers_found_default": 2,
+   "answers_found_raised": 2,
+   "answers_total": 3
+  }
+ ],
+ "config": {
+  "model": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+  "pp": 4,
+  "partition": null,
+  "capture": 16384,
+  "max_model_len": 16384,
+  "max_num_seqs": 16,
+  "max_tokens": 400,
+  "targets": [
+   9000,
+   11000,
+   13000,
+   15000
+  ],
+  "port": 8000,
+  "out": "results/spmd_correct_conc_20261111",
+  "mode": "spmd",
+  "concurrent": true
+ }
+}

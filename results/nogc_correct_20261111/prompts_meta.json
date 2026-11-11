@@ -1,0 +1,36 @@
+{
+ "long": [
+  {
+   "tokens": 9760,
+   "answers": {
+    "7": "RWENQR",
+    "225": "2CU5C4",
+    "447": "7MN2XJ"
+   }
+  },
+  {
+   "tokens": 11949,
+   "answers": {
+    "7": "UB4GMU",
+    "275": "MP3DR6",
+    "547": "PDVKJE"
+   }
+  },
+  {
+   "tokens": 13063,
+   "answers": {
+    "7": "YZ6L37",
+    "300": "CMRFYB",
+    "597": "QW3PKA"
+   }
+  },
+  {
+   "tokens": 15255,
+   "answers": {
+    "7": "S5V42Y",
+    "350": "7UKKAR",
+    "697": "R43Y9Z"
+   }
+  }
+ ]
+}

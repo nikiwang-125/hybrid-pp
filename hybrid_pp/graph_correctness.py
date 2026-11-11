@@ -52,16 +52,23 @@ def build_prompts(tok, targets):
     return out
 
 
-def run(args, capture, prompts, out_path):
+def run(args, capture, prompts, out_path, env_extra=None, concurrent=False):
     extra = [f"--max-seq-len-to-capture={capture}"] if capture else []
     cmd = serve_command(args.model, args.port, args.pp, 1, args.max_model_len,
                         args.max_num_seqs, 0.9, False, extra)
-    env = dict(os.environ, VLLM_USE_V1="0")
+    env = dict(os.environ, VLLM_USE_V1="0", **(env_extra or {}))
     if args.partition:
         env["VLLM_PP_LAYER_PARTITION"] = args.partition
     log = out_path.replace(".json", ".server.log")
     with Server(cmd, env, log, args.port, timeout_s=900):
-        outs = [complete(args.port, args.model, p, args.max_tokens) for p in prompts]
+        if concurrent:
+            # spread requests over the virtual engines (sequential requests
+            # all land on VE0)
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(len(prompts)) as ex:
+                outs = list(ex.map(lambda p: complete(args.port, args.model, p, args.max_tokens), prompts))
+        else:
+            outs = [complete(args.port, args.model, p, args.max_tokens) for p in prompts]
     json.dump(outs, open(out_path, "w"), indent=1, ensure_ascii=False)
     return outs
 
@@ -78,6 +85,10 @@ def main():
     ap.add_argument("--targets", type=int, nargs="+", default=[9000, 11000, 13000, 15000])
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--mode", choices=["capture", "spmd", "nogc"], default="capture",
+                    help="capture: default vs raised graph limit; spmd: normal vs "
+                         "VLLM_USE_RAY_SPMD_WORKER+COMPILED_DAG (both raised)")
+    ap.add_argument("--concurrent", action="store_true")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
 
@@ -89,10 +100,23 @@ def main():
               open(os.path.join(a.out, "prompts_meta.json"), "w"), indent=1)
     print("long prompt tokens:", [x["tokens"] for x in longs], flush=True)
 
-    base = run(a, None, prompts, os.path.join(a.out, "capture_default.json"))
-    print("default (8192) done", flush=True)
-    raised = run(a, a.capture, prompts, os.path.join(a.out, f"capture_{a.capture}.json"))
-    print(f"raised ({a.capture}) done", flush=True)
+    if a.mode == "capture":
+        base = run(a, None, prompts, os.path.join(a.out, "capture_default.json"), concurrent=a.concurrent)
+        print("default (8192) done", flush=True)
+        raised = run(a, a.capture, prompts, os.path.join(a.out, f"capture_{a.capture}.json"), concurrent=a.concurrent)
+        print(f"raised ({a.capture}) done", flush=True)
+    elif a.mode == "nogc":
+        nogc_env = {"HYBRID_PP_CAPTURE_TIMING": "1", "HYBRID_PP_CAPTURE_NO_GC": "1"}
+        base = run(a, a.capture, prompts, os.path.join(a.out, "gc.json"), concurrent=a.concurrent)
+        print("with gc done", flush=True)
+        raised = run(a, a.capture, prompts, os.path.join(a.out, "nogc.json"), nogc_env, a.concurrent)
+        print("no gc done", flush=True)
+    else:
+        spmd_env = {"VLLM_USE_RAY_SPMD_WORKER": "1", "VLLM_USE_RAY_COMPILED_DAG": "1"}
+        base = run(a, a.capture, prompts, os.path.join(a.out, "normal.json"), concurrent=a.concurrent)
+        print("normal done", flush=True)
+        raised = run(a, a.capture, prompts, os.path.join(a.out, "spmd.json"), spmd_env, a.concurrent)
+        print("spmd done", flush=True)
 
     rows, same = [], 0
     for i, (x, y) in enumerate(zip(base, raised)):
