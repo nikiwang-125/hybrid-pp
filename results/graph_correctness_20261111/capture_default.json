@@ -1,0 +1,9 @@
+[
+ " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The capital of Germany is Berlin. The capital of Japan is Tokyo. The capital of Australia is Canberra. The capital of Canada is Ottawa. The capital of Brazil is Brasília. The capital of India is New Delhi. The capital of China",
+ " What are the advantages and disadvantages of using threads over processes?\n- What is a deadlock? How can it be prevented or avoided?\n- Explain the concept of semaphores and their use in synchronization.\n- What is a mutex? How is it different from a semaphore?\n- Describe the producer-consumer problem and",
+ " if n <= 0: return 0 elif n == 1: return 1 else: return fibonacci(n-1) + fibonacci(n-2) ``` output: ```python\ndef fibonacci(n):\n    if n <= 0:\n        return 0\n    elif n == 1:\n",
+ "<think>\nOkay, let's see. The user is asking for the access codes for lockers 7, 225, and 447. I need to go through the list provided and find each of these locker numbers.\n\nStarting with locker 7. Looking at the list, Record 7",
+ "<think>\nOkay, let's see. The user is asking for the access codes for lockers 7, 275, and 547. I need to go through the list provided and find each of these locker numbers.\n\nStarting with locker 7. Looking at the list, Record 7",
+ "<think>\nOkay, let's see. The user is asking for the access codes for lockers 7, 300, and 597. I need to go through the list provided and find each of these locker numbers.\n\nStarting with locker 7. Looking at the list, Record 7",
+ "<think>\nOkay, let's see. The user is asking for the access codes for lockers 7, 350, and 697. I need to go through the list provided and find each of these locker numbers.\n\nStarting with locker 7. Looking at the records, Record 7"
+]
