@@ -43,6 +43,9 @@ import json
 import logging
 import os
 import time
+import socket
+
+from hybrid_pp.profile_features import schedule_features
 
 import torch
 
@@ -74,6 +77,7 @@ class _Recorder:
         self.last = None  # latest finished forward, still collecting ops
         self.paused = 0
         self.call = None  # CPU timings of the running execute_model call
+        self.schedule = {}
         self.wrote_mamba_cache = False
 
     # -- output -------------------------------------------------------------
@@ -104,6 +108,10 @@ class _Recorder:
             "device": torch.cuda.get_device_name(),
             "profile_layers": self.profile_layers,
             "wall": time.time(),
+            "schema_version": 2,
+            "hostname": socket.gethostname(),
+            "run_id": os.environ.get("HYBRID_PP_RUN_ID"),
+            "window_marker_file": os.environ.get("HYBRID_PP_WINDOW_FILE"),
         })
         atexit.register(self.flush)
         logger.info("[hybrid_pp] profiling to %s", path)
@@ -155,6 +163,8 @@ class _Recorder:
         info = {"kind": "step", "step": self.step, "graph": graph,
                 "wall": time.time()}
         info.update(_batch_features())
+        info.update(self.schedule)
+        info['measurement_window'] = _measurement_window()
         start = _new_event()
         start.record()
         self.current = {"info": info, "start": start, "layers": []}
@@ -177,6 +187,19 @@ class _Recorder:
             rec["tail"] = end
 
 
+def _measurement_window():
+    # Optional externally controlled marker. No file means unknown, not main.
+    path = os.environ.get('HYBRID_PP_WINDOW_FILE')
+    if not path:
+        return 'unmarked'
+    try:
+        with open(path) as f:
+            value = f.read(80).strip()
+        return value if value in ('warmup', 'main', 'cooldown') else 'unmarked'
+    except OSError:
+        return 'unmarked'
+
+
 def _batch_features():
     """Batch shape from the V0 attention metadata (host-side fields only)."""
     from vllm.forward_context import get_forward_context
@@ -191,6 +214,7 @@ def _batch_features():
         "batch": len(seq_lens),
         "ctx_sum": int(sum(seq_lens)),
         "ctx_max": int(max(seq_lens)) if seq_lens else 0,
+        "sequence_lengths": list(seq_lens),
     }
 
 
@@ -269,11 +293,18 @@ def _wrap_worker_call(cls):
             return orig(self, *args, **kwargs)
         step_before = rec.step
         rec.call = {"call_start": time.time()}
+        request = kwargs.get('execute_model_req', args[0] if args else None)
+        try:
+            rec.schedule = schedule_features(request)
+        except (AttributeError, TypeError, ValueError) as exc:
+            # An unsupported metadata shape must not break inference.
+            rec.schedule = {'schedule_features_error': type(exc).__name__}
         t0 = time.perf_counter()
         try:
             return orig(self, *args, **kwargs)
         finally:
             call, rec.call = rec.call, None
+            rec.schedule = {}
             call["call_ms"] = (time.perf_counter() - t0) * 1e3
             call["call_end"] = time.time()
             # rec.last stays pending until the next step begins

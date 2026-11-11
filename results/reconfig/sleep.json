@@ -1,0 +1,49 @@
+{
+ "config": {
+  "mode": "sleep",
+  "model": "nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+  "out": "results/reconfig/sleep.json",
+  "repeat": 3,
+  "layers": 3,
+  "kv_gib": 6.0,
+  "kv_layers": 2,
+  "seqs": 32,
+  "ctx": 4096,
+  "max_model_len": 4096,
+  "max_seqs": 8,
+  "gpu_util": 0.9,
+  "eager": false
+ },
+ "engine_init_s": 60.02378264628351,
+ "used_GiB_awake": 20.631103515625,
+ "rounds": [
+  {
+   "sleep_l1_s": 11.109023145399988,
+   "used_GiB_asleep": 1.004150390625,
+   "wake_weights_s": 0.7360592517070472,
+   "used_GiB_weights_only": 17.590087890625,
+   "wake_kv_s": 0.0004910430870950222,
+   "used_GiB_awake": 20.660400390625,
+   "same_output": true
+  },
+  {
+   "sleep_l1_s": 0.9682914800941944,
+   "used_GiB_asleep": 1.004150390625,
+   "wake_weights_s": 0.7355763409286737,
+   "used_GiB_weights_only": 17.590087890625,
+   "wake_kv_s": 0.00043304217979311943,
+   "used_GiB_awake": 20.660400390625,
+   "same_output": true
+  },
+  {
+   "sleep_l1_s": 0.9419833179563284,
+   "used_GiB_asleep": 1.004150390625,
+   "wake_weights_s": 0.7359159160405397,
+   "used_GiB_weights_only": 17.590087890625,
+   "wake_kv_s": 0.0004636240191757679,
+   "used_GiB_awake": 20.660400390625,
+   "same_output": true
+  }
+ ],
+ "note": "resident while asleep = memory outside the weights/kv_cache pools: Mamba state (allocated during profile_run), CUDA graph pools, activations workspace, CUDA context"
+}

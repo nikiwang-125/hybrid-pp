@@ -25,6 +25,21 @@ def _flag(name: str, default: str = "1") -> bool:
     return os.environ.get(name, default) not in ("0", "false", "False", "")
 
 
+def _carry_env_to_ray() -> None:
+    # The Ray executor copies only vLLM-defined env vars to its workers, so
+    # with PP across machines our switches (e.g. HYBRID_PP_PROFILE_DIR) would
+    # reach rank 0 only. Ray workers load plugins in init_worker, after the
+    # env update, so adding our names here is enough.
+    try:
+        from vllm.executor.ray_distributed_executor import (
+            RayDistributedExecutor)
+    except Exception:  # no ray, or a vLLM without the V0 Ray executor
+        return
+    names = {k for k in os.environ if k.startswith("HYBRID_PP_")}
+    RayDistributedExecutor.ADDITIONAL_ENV_VARS = (
+        set(RayDistributedExecutor.ADDITIONAL_ENV_VARS) | names)
+
+
 def register() -> None:
     # vLLM may call plugins more than once per process.
     global _registered
@@ -32,6 +47,7 @@ def register() -> None:
         return
     _registered = True
 
+    _carry_env_to_ray()
     from hybrid_pp.patches import nemotron_h_pp, stage_memory
 
     if _flag("HYBRID_PP_FIX_LOAD"):

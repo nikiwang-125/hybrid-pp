@@ -18,12 +18,12 @@ if [ -n "$busy" ] && [ -z "${FORCE:-}" ]; then
 fi
 
 echo "################ 1. micro: free KV / load layers / rebuild KV / move state"
-python -m hybrid_pp.reconfig_cost micro --model "$MODEL" --out "$OUT/micro.json"
+python3 -m hybrid_pp.reconfig_cost micro --model "$MODEL" --out "$OUT/micro.json"
 
 echo
 echo "################ 2. vLLM sleep mode + engine start-up phases (PP=1, GPU 0)"
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES%%,*} \
-  python -m hybrid_pp.reconfig_cost sleep --model "$MODEL" --out "$OUT/sleep.json" \
+  python3 -m hybrid_pp.reconfig_cost sleep --model "$MODEL" --out "$OUT/sleep.json" \
   > "$OUT/sleep_engine.log" 2>&1
 status=$?
 grep -E "round [0-9]|wrote|Error|error" "$OUT/sleep_engine.log" | tail -n 20

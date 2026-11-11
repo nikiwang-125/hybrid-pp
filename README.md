@@ -21,6 +21,8 @@ mkdir -p logs && bash scripts/day1.sh 2>&1 | tee logs/day1.log   # 第一天全�
 
 ## 仓库结构
 
+2026-11-10 单机阶段的工具、证据边界与运行步骤见 [slave21 阶段记录](docs/single_host_progress_20261110.md)。显存估算使用 `python3 -m hybrid_pp.capacity`，离线测试使用 `python3 -m unittest discover -s tests -v`。
+
 | 路径 | 作用 |
 |---|---|
 | `hybrid_pp/plugin.py` | vLLM 插件入口，按环境变量启用各补丁 |
